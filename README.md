@@ -1,11 +1,10 @@
-## My Project
+## aws-lakeformation-encrypted-datalakes
 
-TODO: Fill this README out!
-
-Be sure to:
-
-* Change the title in this README
-* Edit your repository description on GitHub
+This repository contains all the resources for deploying encrypted lake formation datalake.
+There are 3 files.
+1) **data.json**
+2) **lakeformation_encryption_demo.yaml**
+3) **script.py**
 
 ## Security
 

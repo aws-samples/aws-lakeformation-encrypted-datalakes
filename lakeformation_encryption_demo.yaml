@@ -1,0 +1,327 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: "AWS::Serverless-2016-10-31"
+Description: "LakeFormation Resources"
+
+
+Parameters:
+  DataLakeBucket:
+    Type: String
+    Description: "Enter the name of data lake bucket to be created"
+  GlueJobScriptBucketPath:
+    Type: String
+    Description : "Enter glue job script path like s3://glue-script-bucket/script.py"
+
+Resources:
+  LakeFormationRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: "lake-formation-demo-role"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lakeformation.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "s3:ListAllMyBuckets"
+                Resource: "arn:aws:s3:::*"
+              - Effect: Allow
+                Action:
+                  - "s3:PutObject"
+                  - "s3:GetObject"
+                  - "s3:DeleteObject"
+                Resource: !Sub "arn:aws:s3:::${DatalakeBucket}/*"
+              - Effect: Allow
+                Action:
+                  - "s3:ListBucket"
+                Resource: !Sub "arn:aws:s3:::${DatalakeBucket}"
+
+  DataLakeLoggingBucket:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      AccessControl: "LogDeliveryWrite"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: True
+        BlockPublicPolicy: True
+        IgnorePublicAcls: True
+        RestrictPublicBuckets: True
+
+
+  DatalakeBucket:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      BucketName: !Ref DataLakeBucket
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LoggingConfiguration:
+        DestinationBucketName: !Ref DataLakeLoggingBucket
+        LogFilePrefix: 'datalake/'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: True
+        BlockPublicPolicy: True
+        IgnorePublicAcls: True
+        RestrictPublicBuckets: True
+
+  DatalakeBucketLakeFormationS3Registration:
+    DependsOn : "DatalakeBucket"
+    Type: AWS::LakeFormation::Resource
+    Properties:
+      ResourceArn: !Sub "arn:aws:::s3:${DatalakeBucket}/"
+      RoleArn: !GetAtt LakeFormationRole.Arn
+      UseServiceLinkedRole: False
+
+  DatalakeBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DatalakeBucket
+      PolicyDocument:
+        Statement:
+          - Sid: DenyIncorrectEncryptionHeader
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:PutObject'
+            Resource: !Sub
+              - 'arn:aws:s3:::${Bucket}/*'
+              - Bucket: !Ref DatalakeBucket
+            Condition:
+              StringNotEquals:
+                's3:x-amz-server-side-encryption': 'aws:kms'
+          - Sid: DenyUnEncryptedObjectUploads
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:PutObject'
+            Resource: !Sub
+              - 'arn:aws:s3:::${Bucket}/*'
+              - Bucket: !Ref DatalakeBucket
+            Condition:
+              'Null':
+                's3:x-amz-server-side-encryption': true
+
+  KMSDataKey:
+    Type: "AWS::KMS::Key"
+    DeletionPolicy: Retain
+    Properties:
+      Description: "Lake formation Data KMS Key"
+      EnableKeyRotation: True
+      KeyPolicy:
+        Version: "2012-10-17"
+        Id: "lake-formation-kms-data-key-policy"
+        Statement:
+          - Sid: Allow administration of the key
+            Action: "kms:*"
+            Effect: Allow
+            Principal:
+              AWS: [!Sub "arn:aws:iam::${AWS::AccountId}:root"]
+            Resource: "*"
+          - Sid: Allow Lake Formation permissions
+            Action:
+              - "kms:Encrypt"
+              - "kms:Decrypt"
+              - "kms:ReEncrypt*"
+              - "kms:GenerateDataKey*"
+              - "kms:DescribeKey"
+            Effect: Allow
+            Principal:
+              AWS:
+                - !GetAtt LakeFormationRole.Arn
+                - !GetAtt GlueRole.Arn
+                - !GetAtt DatalakeCrawlerRole.Arn
+            Resource: "*"
+          - Sid: Allow logs access
+            Effect: Allow
+            Principal:
+              Service:
+                - !Sub "logs.${AWS::Region}.amazonaws.com"
+            Action:
+              - "kms:DescribeKey"
+              - "kms:Encrypt"
+              - "kms:Decrypt"
+              - "kms:ReEncrypt*"
+              - "kms:GenerateDataKey*"
+              - "kms:CreateGrant"
+            Resource: "*"
+
+  KMSDataKeyAlias:
+    Type: "AWS::KMS::Alias"
+    Properties:
+      AliasName: "alias/lakeformation-kms-data-key"
+      TargetKeyId: !Ref KMSDataKey
+
+  GlueSecurityConfiguration:
+    Type: "AWS::Glue::SecurityConfiguration"
+    Properties:
+      Name: "lake-formation-glue-security-config"
+      EncryptionConfiguration:
+        CloudWatchEncryption:
+          CloudWatchEncryptionMode: "SSE-KMS"
+          KmsKeyArn: !GetAtt KMSDataKey.Arn
+        JobBookmarksEncryption:
+          JobBookmarksEncryptionMode: "CSE-KMS"
+          KmsKeyArn: !GetAtt KMSDataKey.Arn
+        S3Encryptions:
+          - S3EncryptionMode: "SSE-KMS"
+            KmsKeyArn: !GetAtt KMSDataKey.Arn
+
+
+  DatalakeCrawlerRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: "demo-lake-formation-glue-crawler-role"
+      Path: "/service-role/"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "glue.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole"
+      Policies:
+        - PolicyName: "lake-formation-glue-crawler"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "s3:GetObject"
+                  - "s3:PutObject"
+                Resource:
+                  - !Sub "arn:aws:s3:::${DatalakeBucket}/*"
+              - Effect: Allow
+                Action:
+                  - "logs:AssociateKmsKey"
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws-glue/crawlers*"
+
+
+  GlueCatalogEncryption:
+    Type: AWS::Glue::DataCatalogEncryptionSettings
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DataCatalogEncryptionSettings:
+        EncryptionAtRest:
+            CatalogEncryptionMode: SSE-KMS
+            SseAwsKmsKeyId: !Ref KMSDataKey
+
+  GlueDataCatalog:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Description: "lakeformation glue metadata catalog"
+        Name: "lakeformation-glue-catalog-db"
+
+  GlueCrawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Role: !GetAtt DatalakeCrawlerRole.Arn
+      DatabaseName: !Ref GlueDataCatalog
+      Name: "lakeformation-glue-crawler"
+      CrawlerSecurityConfiguration: !Ref GlueSecurityConfiguration
+      Targets:
+        S3Targets:
+          - Path: !Sub "s3://${DatalakeBucket}/processed/"
+
+  GlueCrawlerLakeFormationPermissions:
+    Type: "AWS::LakeFormation::Permissions"
+    Properties:
+      DataLakePrincipal:
+        DataLakePrincipalIdentifier: !GetAtt DatalakeCrawlerRole.Arn
+      Permissions:
+        - "CREATE_TABLE"
+        - "ALTER"
+        - "DROP"
+      Resource:
+        DatabaseResource:
+          Name: !Ref GlueDataCatalog
+
+
+  GlueRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: "demo-lake-formation-glue-job-role"
+      Path: "/service-role/"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "glue.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole"
+      Policies:
+        - PolicyName: "lake-formation-glue-policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "s3:GetObject"
+                  - "s3:PutObject"
+                  - "s3:DeleteObject"
+                Resource:
+                  - !Join [ "", [ "arn:aws:s3:::", !Select [2, !Split ["/", !Ref GlueJobScriptBucketPath ] ], "/*" ] ]
+                  - !Sub "arn:aws:s3:::${DatalakeBucket}/*"
+              - Effect: Allow
+                Action:
+                  - "s3:ListBucket"
+                Resource:
+                  - !Sub "arn:aws:s3:::${DatalakeBucket}"
+                  - !Join [ "", [ "arn:aws:s3:::", !Select [2, !Split ["/", !Ref GlueJobScriptBucketPath ] ] ] ]
+              - Effect: Allow
+                Action:
+                  - "logs:AssociateKmsKey"
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws-glue/jobs*"
+
+
+
+  GlueJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Command:
+        Name: glueetl
+        ScriptLocation: !Ref GlueJobScriptBucketPath
+      DefaultArguments:
+        '--job-bookmark-option': job-bookmark-enable
+        '--enable-metrics': ''
+        '--enable-continuous-cloudwatch-log': "true"
+        '--enable-continuous-log-filter': "false"
+        '--INPUT_LOC': !Sub "s3://${DatalakeBucket}/raw"
+        '--OUTPUT_LOC': !Sub "s3://${DatalakeBucket}/processed"
+      ExecutionProperty:
+        MaxConcurrentRuns: 3
+      MaxRetries: 0
+      NumberOfWorkers: 3
+      GlueVersion: "2.0"
+      WorkerType: "Standard"
+      Name: "lake-formation-demo-glue-job"
+      Role: !Ref GlueRole
+      SecurityConfiguration: !Ref GlueSecurityConfiguration
+
+
+

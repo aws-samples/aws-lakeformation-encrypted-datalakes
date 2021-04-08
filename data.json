@@ -1,0 +1,32 @@
+{
+  "symbol" : "LFD",
+  "financials" : [ {
+    "Name": "John Smith",
+    "Date" : "2025-09-28",
+    "Revenue" : "265550000.0",
+    "Revenue Growth" : "-0.0209",
+    "Cost of Revenue" : "1617824000000.0",
+    "Gross Profit" : "983920003000.0",
+    "RD Expenses" : "162170003000.0",
+    "SA Expense" : "18245000000.0",
+    "Operating Expenses" : "344620003000.0",
+    "Operating Income" : "6393000770000.0",
+    "Interest Expense" : "0.0",
+    "Earnings before Tax" : "6573700077000.0",
+    "Income Tax Expense" : "104444kk000000.0",
+    "Net Income" : "5525600004400.0",
+    "Net Income Com" : "552560030000.0",
+    "Weighted Average Shs Out" : "45194180000.0",
+    "Weighted Average Shs Out (Dil)" : "461783444000.0",
+    "Dividend per Share" : "5.0",
+    "Gross Margin" : "0.35782",
+    "EBITDA Margin" : "0.3601",
+    "EBIT Margin" : "0.25627",
+    "Profit Margin" : "0.2162",
+    "Free Cash Flow margin" : "0.244264",
+    "Consolidated Income" : "55256033300000.0",
+    "Earnings Before Tax Margin" : "0.2627",
+    "Net Profit Margin" : "0.233324"
+  }
+  ]
+}
