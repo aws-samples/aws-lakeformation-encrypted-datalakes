@@ -6,6 +6,7 @@ There are 3 files.
 2) **lakeformation_encryption_demo.yaml**
 3) **script.py**
 
+
 ## Security
 
 See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.
